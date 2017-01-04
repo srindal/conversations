@@ -1,12 +1,13 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
- 
+
 namespace ConsoleApplication1
 {
-    public class Program
-    { 
-        private static question[] bil = 
+    public class SkadeChat
+    {
+        private static Question[] bil =
         {
             q("I Alka håndterer vi over 30.000 bilskader hvert år. Vil du have nogle generelle råd?")
                 .OnYes("Jeg har ingen råd, men nice try"),
@@ -26,7 +27,7 @@ namespace ConsoleApplication1
             q("Helmers autoværksted ringer til dig i morgen, så I kan aftale en tid")
         };
 
-        private static question[] f2 =
+        private static Question[] f2 =
         {
             q("Hvad hedder du?", "name"),
             q("Hej {name}, det er aldrig rart når man er ude for et uheld."),
@@ -35,166 +36,223 @@ namespace ConsoleApplication1
                 .On("Hest"),
             q("Hav en fortsat god dag")
         };
-  
+
+
         public static void Main(string[] args)
         {
             var state = new State();
             state.Set("carmodel", "Ford Mustang 1978");
-            exec(f2.ToList(), state);
-        }
- 
-        public static void exec(List<question> flow, State st)
-        {
-            foreach (question q in flow)
+            var hist = new List<string>();
+            string q = null;
+            Result<List<QA>> res = Exec(hist);
+            while (res.IsFailure || res.Value.Count > 0)
             {
-                Boolean accepted = false;
-                do
+                if (res.IsFailure)
                 {
-                    var res = ask(q, st);
-                    accepted = q.isOk(res);
-                    if (accepted && q.id != null)
-                    {
-                        st.Set(q.id, res);
-                    }
-                    if (!accepted)
-                    {
-                        Console.WriteLine("!!!Du skal svare rigtigt!!!!");
-                    } else if (q.routes.Count > 0) {
-                        exec(q.routes[res].ToList(), st);                
-                    }
-                } while (!accepted);                
+                    Console.WriteLine(res.Error);
+                    res = Exec(f2.ToList(), state, hist);
+                }
+                else if (!string.IsNullOrEmpty(res.Value[0]._answer))
+                {
+                    hist.Add(res.Value[0]._answer);
+                }
+                foreach (var qa in res.Value)
+                {
+                    Console.WriteLine(qa._question);
+                }
+                var newHist = new List<string>(hist);
+                newHist.Add(Console.ReadLine());
+                res = Exec(f2.ToList(), state, newHist);
             }
         }
- 
-        private static question q(string q)
+
+
+
+        public static Result<List<QA>> Exec(List<string> history)
         {
-            return new question(q, null);
+            if (history.Count == 0)
+            {
+                var res = new List<QA> { new QA(f2[0], "", f2[0].Q) };
+                return Result.Ok(res);
+            }
+            return Exec(f2.ToList(), new State(), history);
         }
- 
-        private static question q(string q, string id)
+
+        static Result<List<QA>> Exec(List<Question> flow, State st, List<string> history)
         {
-            return new question(q, id);
+            var res = new List<QA>();
+            while (flow.Count > 0)
+            {
+                Question q = flow[0];
+                flow.RemoveAt(0);
+                var answer = ask(q, st, history);
+                Boolean lastAnswer = history.Count == 0;
+                if (!q.IsOk(answer))
+                {
+                    return Result.Fail<List<QA>>("!!!Du skal svare rigtigt!!!!");
+                }
+                else if (q.Id != null)
+                {
+                    st.Set(q.Id, answer);
+                }
+                if (answer != null && q.Routes.ContainsKey(answer))
+                {
+                    flow.InsertRange(0, q.Routes[answer]);
+                }
+                if (lastAnswer && flow.Count > 0)
+                {
+                    res.Add(new QA(flow[0], answer, question(flow[0], st)));
+                    if ((flow[0].Id != null || flow[0].Preds.Count > 0) && history.Count == 0)
+                    {
+                        return Result.Ok(res);
+                    }
+                }
+            }
+            return Result.Ok(res);
         }
- 
-        private static string ask(question q, State st)
+
+
+        private static Question q(string q)
         {
-            var s = q.q + (q.preds.Keys.Count > 0 ? " (" + String.Join("/", q.preds.Keys) + ")" : "");
-            Console.WriteLine(s.StringFormat(st.s));
-            return q.id != null || q.preds.Count > 0 ? Console.ReadLine() : null;
+            return new Question(q, null);
         }
- 
- 
+
+        private static Question q(string q, string id)
+        {
+            return new Question(q, id);
+        }
+
+        private static string question(Question q, State st)
+        {
+            var s = q.Q + (q.Preds.Keys.Count > 0 ? " (" + String.Join("/", q.Preds.Keys) + ")" : "");
+            return s.StringFormat(st.s);
+        }
+
+        private static string ask(Question q, State st, List<string> history)
+        {
+            if (history.Count > 0 && (q.Id != null || q.Preds.Count > 0))
+            {
+                var res = history[0];
+                history.RemoveAt(0);
+                return res;
+            }
+            return null;
+        }
     }
- 
- 
-    public class question
+
+    public class QA
     {
-        public readonly string id;
- 
-        public string q { get; }
- 
-        public Dictionary<string, question[]> routes = new Dictionary<string, question[]>();
-        public Dictionary<string, Predicate<object>> preds = new Dictionary<string, Predicate<object>>();
- 
-        public question(string q, string id)
+        public string _question { get; }
+
+        public string _answer { get; }
+
+        public List<string> _alternatives;
+
+        public QA(Question q, string a, string question)
         {
-            this.id = id;
-            this.q = q;
+            _question = question;
+            _alternatives = new List<string>(q.Preds.Keys);
+            _answer = a;
         }
- 
-        public question RegisterRoute(string key, question[] q)
+    }
+
+    public class Question
+    {
+        public readonly string Id;
+
+        public string Q { get; }
+
+        public Dictionary<string, Question[]> Routes = new Dictionary<string, Question[]>();
+        public Dictionary<string, Predicate<object>> Preds = new Dictionary<string, Predicate<object>>();
+
+        public Question(string q, string id)
         {
-            routes[key] = q;
-            return this;
+            this.Id = id;
+            this.Q = q;
         }
- 
-        public question RegisterPred(string key, Predicate<object> p)
+
+        public Question RegisterRoute(string key, Question[] q)
         {
-            preds[key] = p;
+            Routes[key] = q;
             return this;
         }
 
-        public bool isOk(string key) {
-            if (preds.Count == 0) {
+        public Question RegisterPred(string key, Predicate<object> p)
+        {
+            Preds[key] = p;
+            return this;
+        }
+
+        public bool IsOk(string key)
+        {
+            if (Preds.Count == 0)
+            {
                 return true;
             }
-            if (key == null) {
+            if (key == null)
+            {
                 return false;
             }
-            if (preds.ContainsKey(key)) {
-                return preds[key](key);
-            } else {
-                foreach (var p in preds) {
-                    if (preds[p.Key](key)) {
-                        return true;
-                    }
+            foreach (var p in Preds)
+            {
+                if (Preds[p.Key](key))
+                {
+                    return true;
                 }
-            
             }
             return false;
         }
     }
- 
- 
-    public class State
+
+    public static class QuestionExtensions
     {
-        public Dictionary<string, string> s = new Dictionary<string, string>();
- 
-        public string Get(string key)
-        {
-            return s.ContainsKey(key) ? s[key] : "";
-        }
- 
-        public State Set(string key, string val)
-        {
-            s[key] = val;
-            return this;
-;        }
-    }
- 
-    public static class Extensions
-    {
- 
-        public static question OnYes(this question jn, params question[] q)
+
+        public static Question OnYes(this Question jn, params Question[] q)
         {
             var res = On(jn, "Ja", q);
-            if (!jn.routes.ContainsKey("Nej")) {
+            if (!jn.Routes.ContainsKey("Nej"))
+            {
                 jn.OnNo("");
             }
             return res;
         }
 
-        public static question OnYes(this question q, string s) {
-            return OnYes(q, new question(s, null));
-        }
-
-        public static question OnNo(this question q, string s) {
-            return OnNo(q, new question(s, null));
-        }
-
-
-        public static question OnNo(this question jn, params question[] q)
+        public static Question OnYes(this Question q, string s)
         {
-            if (!jn.routes.ContainsKey("Ja")) {
+            return OnYes(q, new Question(s, null));
+        }
+
+        public static Question OnNo(this Question q, string s)
+        {
+            return OnNo(q, new Question(s, null));
+        }
+
+
+        public static Question OnNo(this Question jn, params Question[] q)
+        {
+            if (!jn.Routes.ContainsKey("Ja"))
+            {
                 jn.OnYes("");
             }
             return On(jn, "Nej", q);
         }
- 
-        public static question On(this question q, string key, Predicate<object> p, params question[] qs)
+
+        public static Question On(this Question q, string key, Predicate<object> p, params Question[] qs)
         {
             return q.RegisterRoute(key, qs).RegisterPred(key, p);
         }
 
-        public static question On(this question q, string key, params question[] qs) {
+        public static Question On(this Question q, string key, params Question[] qs)
+        {
             return On(q, key, s => s.Equals(key), qs);
         }
 
-        public static question OnInterval(this question q, int from, int to, params question[] qs) {
-            return q.RegisterPred(from+"-"+to, s => Int32.Parse(s.ToString()) >= from && to >= Int32.Parse(s.ToString()));
+        public static Question OnInterval(this Question q, int from, int to, params Question[] qs)
+        {
+            return q.RegisterPred(from + "-" + to, s => Int32.Parse(s.ToString()) >= from && to >= Int32.Parse(s.ToString()));
         }
- 
- 
+
+
         public static string StringFormat(this string format, IDictionary<string, string> values)
         {
             foreach (var p in values)
@@ -202,4 +260,182 @@ namespace ConsoleApplication1
             return format;
         }
     }
+
+    class State
+    {
+        public Dictionary<string, string> s = new Dictionary<string, string>();
+
+        public string Get(string key)
+        {
+            return s.ContainsKey(key) ? s[key] : "";
+        }
+
+        public State Set(string key, string val)
+        {
+            s[key] = val;
+            return this;
+        }
+    }
+
+    internal sealed class ResultCommonLogic
+    {
+        public bool IsFailure { get; }
+        public bool IsSuccess => !IsFailure;
+
+        [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+        private readonly string _error;
+
+        public string Error
+        {
+            [DebuggerStepThrough]
+            get
+            {
+                if (IsSuccess)
+                    throw new InvalidOperationException("There is no error message for success.");
+
+                return _error;
+            }
+        }
+
+        [DebuggerStepThrough]
+        public ResultCommonLogic(bool isFailure, string error)
+        {
+            if (isFailure)
+            {
+                if (string.IsNullOrEmpty(error))
+                    throw new ArgumentNullException(nameof(error), "There must be error message for failure.");
+            }
+            else
+            {
+                if (error != null)
+                    throw new ArgumentException("There should be no error message for success.", nameof(error));
+            }
+
+            IsFailure = isFailure;
+            _error = error;
+        }
+    }
+
+    public struct Result
+    {
+        private static readonly Result _okResult = new Result(false, null);
+
+        [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+        private readonly ResultCommonLogic _logic;
+
+        public bool IsFailure => _logic.IsFailure;
+        public bool IsSuccess => _logic.IsSuccess;
+        public string Error => _logic.Error;
+
+        [DebuggerStepThrough]
+        private Result(bool isFailure, string error)
+        {
+            _logic = new ResultCommonLogic(isFailure, error);
+        }
+
+        [DebuggerStepThrough]
+        public static Result Ok()
+        {
+            return _okResult;
+        }
+
+        [DebuggerStepThrough]
+        public static Result Fail(string error)
+        {
+            return new Result(true, error);
+        }
+
+        [DebuggerStepThrough]
+        public static Result<T> Ok<T>(T value)
+        {
+            return new Result<T>(false, value, null);
+        }
+
+        [DebuggerStepThrough]
+        public static Result<T> Fail<T>(string error)
+        {
+            return new Result<T>(true, default(T), error);
+        }
+
+        /// <summary>
+        /// Returns first failure in the list of <paramref name="results"/>. If there is no failure returns success.
+        /// </summary>
+        /// <param name="results">List of results.</param>
+        [DebuggerStepThrough]
+        public static Result FirstFailureOrSuccess(params Result[] results)
+        {
+            foreach (Result result in results)
+            {
+                if (result.IsFailure)
+                    return Fail(result.Error);
+            }
+
+            return Ok();
+        }
+
+        /// <summary>
+        /// Returns failure which combined from all failures in the <paramref name="results"/> list. Error messages are separated by <paramref name="errorMessagesSeparator"/>. 
+        /// If there is no failure returns success.
+        /// </summary>
+        /// <param name="errorMessagesSeparator">Separator for error messages.</param>
+        /// <param name="results">List of results.</param>
+        [DebuggerStepThrough]
+        public static Result Combine(string errorMessagesSeparator, params Result[] results)
+        {
+            List<Result> failedResults = results.Where(x => x.IsFailure).ToList();
+
+            if (!failedResults.Any())
+                return Ok();
+
+            string errorMessage = string.Join(errorMessagesSeparator, failedResults.Select(x => x.Error).ToArray());
+            return Fail(errorMessage);
+        }
+
+        [DebuggerStepThrough]
+        public static Result Combine(params Result[] results)
+        {
+            return Combine(", ", results);
+        }
+    }
+
+    public struct Result<T>
+    {
+        [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+        private readonly ResultCommonLogic _logic;
+
+        public bool IsFailure => _logic.IsFailure;
+        public bool IsSuccess => _logic.IsSuccess;
+        public string Error => _logic.Error;
+
+        [DebuggerBrowsable(DebuggerBrowsableState.Never)]
+        private readonly T _value;
+
+        public T Value
+        {
+            [DebuggerStepThrough]
+            get
+            {
+                if (!IsSuccess)
+                    throw new InvalidOperationException("There is no value for failure.");
+
+                return _value;
+            }
+        }
+
+        [DebuggerStepThrough]
+        internal Result(bool isFailure, T value, string error)
+        {
+            if (!isFailure && value == null)
+                throw new ArgumentNullException(nameof(value));
+
+            _logic = new ResultCommonLogic(isFailure, error);
+            _value = value;
+        }
+
+        public static implicit operator Result(Result<T> result)
+        {
+            return result.IsSuccess ? Result.Ok() : Result.Fail(result.Error);
+        }
+    }
 }
+
