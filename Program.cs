@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Runtime.Remoting.Messaging;
 
 namespace ConsoleApplication1
 {
@@ -30,6 +31,7 @@ namespace ConsoleApplication1
         private static Question[] f2 =
         {
             q("Hvad hedder du?", "name"),
+            q("").OnState("carmodel", s => s.s.ContainsKey("carmodel1"), q("Jeg er munken")),
             q("Hej {name}, det er aldrig rart når man er ude for et uheld."),
             q("Hvad er gået i stykker?")
                 .On("Bil", bil)
@@ -58,7 +60,9 @@ namespace ConsoleApplication1
                 }
                 foreach (var qa in res.Value)
                 {
-                    Console.WriteLine(qa._question);
+                    if (qa._question != null) { 
+                        Console.WriteLine(qa._question);
+                    }
                 }
                 var newHist = new List<string>(hist);
                 newHist.Add(Console.ReadLine());
@@ -86,23 +90,24 @@ namespace ConsoleApplication1
                 Question q = flow[0];
                 flow.RemoveAt(0);
                 var answer = ask(q, st, history);
-                Boolean lastAnswer = history.Count == 0;
-                if (!q.IsOk(answer))
+                Boolean lastAnswer = history.Count == 0 && (q.Id != null || q.Routes.Count > 0);
+                var isOk = q.IsOk(answer, st);
+                if (isOk.IsFailure)
                 {
                     return Result.Fail<List<QA>>("!!!Du skal svare rigtigt!!!!");
                 }
-                else if (q.Id != null)
+                if (q.Id != null)
                 {
                     st.Set(q.Id, answer);
                 }
-                if (answer != null && q.Routes.ContainsKey(answer))
+                if (q.Routes.Count > 0 && q.Routes.ContainsKey(isOk.Value))
                 {
-                    flow.InsertRange(0, q.Routes[answer]);
+                    flow.InsertRange(0, q.Routes[isOk.Value]);
                 }
                 if (lastAnswer && flow.Count > 0)
                 {
                     res.Add(new QA(flow[0], answer, question(flow[0], st)));
-                    if ((flow[0].Id != null || flow[0].Preds.Count > 0) && history.Count == 0)
+                    if ((flow[0].Id != null || (flow[0].Preds.Count > 0 && !String.IsNullOrEmpty(flow[0].Q))) && history.Count == 0)
                     {
                         return Result.Ok(res);
                     }
@@ -110,7 +115,6 @@ namespace ConsoleApplication1
             }
             return Result.Ok(res);
         }
-
 
         private static Question q(string q)
         {
@@ -150,7 +154,7 @@ namespace ConsoleApplication1
 
         public QA(Question q, string a, string question)
         {
-            _question = question;
+            _question = (string.IsNullOrEmpty(q.Q)) ? null : question;
             _alternatives = new List<string>(q.Preds.Keys);
             _answer = a;
         }
@@ -163,7 +167,7 @@ namespace ConsoleApplication1
         public string Q { get; }
 
         public Dictionary<string, Question[]> Routes = new Dictionary<string, Question[]>();
-        public Dictionary<string, Predicate<object>> Preds = new Dictionary<string, Predicate<object>>();
+        public Dictionary<string, Func<State, object, bool>> Preds = new Dictionary<string, Func<State, object, bool>>();
 
         public Question(string q, string id)
         {
@@ -176,31 +180,31 @@ namespace ConsoleApplication1
             Routes[key] = q;
             return this;
         }
-
-        public Question RegisterPred(string key, Predicate<object> p)
+    
+        public Question RegisterPred(string key, Predicate<Object> p)
         {
-            Preds[key] = p;
+            Preds[key] = (s, e) => p(e);
             return this;
         }
 
-        public bool IsOk(string key)
+        public Result<String> IsOk(string key, State s)
         {
             if (Preds.Count == 0)
             {
-                return true;
-            }
-            if (key == null)
-            {
-                return false;
+                return Result.Ok(key ?? "");
             }
             foreach (var p in Preds)
             {
-                if (Preds[p.Key](key))
+                if (Preds[p.Key](s, key))
                 {
-                    return true;
+                    return Result.Ok(p.Key);
                 }
             }
-            return false;
+            if (key == null && !String.IsNullOrEmpty(Q))
+            {
+                return Result.Fail<String>("Fejl1");
+            }
+            return Result.Ok("");
         }
     }
 
@@ -252,6 +256,14 @@ namespace ConsoleApplication1
             return q.RegisterPred(from + "-" + to, s => Int32.Parse(s.ToString()) >= from && to >= Int32.Parse(s.ToString()));
         }
 
+        public static Question OnState(this Question q, string key, Predicate<State> p, params Question[] qs)
+        {
+            q.Preds[key] = (s, i) => p(s);
+            q.Routes[key] = qs;
+            return q;
+        }
+
+
 
         public static string StringFormat(this string format, IDictionary<string, string> values)
         {
@@ -261,7 +273,7 @@ namespace ConsoleApplication1
         }
     }
 
-    class State
+    public class State
     {
         public Dictionary<string, string> s = new Dictionary<string, string>();
 
