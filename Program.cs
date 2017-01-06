@@ -2,13 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Runtime.Remoting.Messaging;
+
 
 namespace ConsoleApplication1
 {
     public class SkadeChat
     {
-        private static Question[] bil =
+       /* private static Question[] bil =
         {
             q("I Alka håndterer vi over 30.000 bilskader hvert år. Vil du have nogle generelle råd?")
                 .OnYes("Jeg har ingen råd, men nice try"),
@@ -38,7 +38,14 @@ namespace ConsoleApplication1
                 .On("Hest"),
             q("Hav en fortsat god dag")
         };
+*/
 
+        private static IStep[] f =
+        {
+            q("Hej Knallert"),
+            q("Kan måger knalde?", "fugl"),
+            q("Sved er lækkert")
+        };
 
         public static void Main(string[] args)
         {
@@ -46,136 +53,191 @@ namespace ConsoleApplication1
             state.Set("carmodel", "Ford Mustang 1978");
             var hist = new List<string>();
             string q = null;
-            Result<List<QA>> res = Exec(hist);
-            while (res.IsFailure || res.Value.Count > 0)
+            Result<List<QA>> res = Result.Fail<List<QA>>("Katten er grim");
+            do
             {
+                res = Exec(f.ToList(), state, localHist(hist, q));
                 if (res.IsFailure)
                 {
                     Console.WriteLine(res.Error);
-                    res = Exec(f2.ToList(), state, hist);
+                    q = null;
                 }
-                else if (!string.IsNullOrEmpty(res.Value[0]._answer))
+                else
                 {
-                    hist.Add(res.Value[0]._answer);
+                    foreach (var qa in res.Value)
+                    {
+                        if (qa.Answer != null)
+                        {
+                            Console.WriteLine(qa.Answer);
+                            hist.Add(qa.Answer);
+                        }
+                        if (qa.Label != null)
+                        {
+                            Console.WriteLine(qa.Label);
+                        }
+                    }
+                    q = res.Value.LastElementIsBreaking() ? Console.ReadLine() : null;
                 }
-                foreach (var qa in res.Value)
+            } while (!IsEndOfFlow(res));
+        }
+
+        private static List<string> localHist(List<string> hist, string a)
+        {
+            List<string> s = new List<string>(hist);
+            if (a != null)
+            {
+                s.Add(a);
+            }
+        return s;
+        }
+
+        private static bool IsEndOfFlow(Result<List<QA>> res)
+        {
+            return !res.IsFailure && res.Value.Count == 0 && !res.Value.LastElementIsBreaking();
+        }
+
+
+        static Result<List<QA>> Exec(List<IStep> flow, State st, List<string> history)
+        {
+            ReplayHistory(flow, st, history);
+            var res = RunToNextBreak(flow, st);
+            if (res.IsSuccess && flow.Count > 0)
+            {
+                res.Value.Add(new QA(flow[0]));
+            }
+            return res;
+        }
+
+        static Result<List<QA>> ReplayHistory(List<IStep> flow, State st, List<string> hist)
+        {
+            Result<List<QA>> res = Result.Fail<List<QA>>("initial");
+            foreach (var s in hist)
+            {
+                res = RunToNextBreak(flow, st);
+                if (res.IsSuccess)
                 {
-                    if (qa._question != null) { 
-                        Console.WriteLine(qa._question);
+                    var step = f[0];
+                    if (step is Question)
+                    {
+                        st.Set(((Question)step).Key, s);
+                        flow.RemoveAt(0);
+                        res.Value.Add(new QA(step, s));
                     }
                 }
-                var newHist = new List<string>(hist);
-                newHist.Add(Console.ReadLine());
-                res = Exec(f2.ToList(), state, newHist);
             }
+            return res;
         }
 
+       
 
-
-        public static Result<List<QA>> Exec(List<string> history)
-        {
-            if (history.Count == 0)
-            {
-                var res = new List<QA> { new QA(f2[0], "", f2[0].Q) };
-                return Result.Ok(res);
-            }
-            return Exec(f2.ToList(), new State(), history);
-        }
-
-        static Result<List<QA>> Exec(List<Question> flow, State st, List<string> history)
+        static Result<List<QA>> RunToNextBreak(List<IStep> flow, State st)
         {
             var res = new List<QA>();
-            while (flow.Count > 0)
+            Result<IStep> next = flow.TakeNextNonBreakingStep();
+            while (next.IsSuccess)
             {
-                Question q = flow[0];
-                flow.RemoveAt(0);
-                var answer = ask(q, st, history);
-                Boolean lastAnswer = history.Count == 0 && (q.Id != null || q.Routes.Count > 0);
-                var isOk = q.IsOk(answer, st);
-                if (isOk.IsFailure)
-                {
-                    return Result.Fail<List<QA>>("!!!Du skal svare rigtigt!!!!");
-                }
-                if (q.Id != null)
-                {
-                    st.Set(q.Id, answer);
-                }
-                if (q.Routes.Count > 0 && q.Routes.ContainsKey(isOk.Value))
-                {
-                    flow.InsertRange(0, q.Routes[isOk.Value]);
-                }
-                if (lastAnswer && flow.Count > 0)
-                {
-                    res.Add(new QA(flow[0], answer, question(flow[0], st)));
-                    if ((flow[0].Id != null || (flow[0].Preds.Count > 0 && !String.IsNullOrEmpty(flow[0].Q))) && history.Count == 0)
-                    {
-                        return Result.Ok(res);
-                    }
-                }
-            }
+                res.Add(new QA(next.Value));
+                next = flow.TakeNextNonBreakingStep();
+            } 
             return Result.Ok(res);
         }
 
-        private static Question q(string q)
+              
+
+        private static IStep q(string q)
         {
-            return new Question(q, null);
+            return new Line(q);
         }
 
         private static Question q(string q, string id)
         {
             return new Question(q, id);
         }
-
-        private static string question(Question q, State st)
-        {
-            var s = q.Q + (q.Preds.Keys.Count > 0 ? " (" + String.Join("/", q.Preds.Keys) + ")" : "");
-            return s.StringFormat(st.s);
-        }
-
-        private static string ask(Question q, State st, List<string> history)
-        {
-            if (history.Count > 0 && (q.Id != null || q.Preds.Count > 0))
-            {
-                var res = history[0];
-                history.RemoveAt(0);
-                return res;
-            }
-            return null;
-        }
+     
     }
 
     public class QA
     {
-        public string _question { get; }
+        public readonly bool IsBreaking;
 
-        public string _answer { get; }
+        public string Label { get; }
 
-        public List<string> _alternatives;
+        public string Answer { get; }
 
-        public QA(Question q, string a, string question)
+        public List<string> Alternatives;
+
+        public QA(IStep q)
         {
-            _question = (string.IsNullOrEmpty(q.Q)) ? null : question;
-            _alternatives = new List<string>(q.Preds.Keys);
-            _answer = a;
+            Label = ((ILabelStep) q)?.Label;
+            Alternatives = new List<string>();
+            IsBreaking = q is IBreakingStep;
+        }
+
+        public QA(IStep q, string a) : this(q)
+        {
+            Answer = a;
         }
     }
 
-    public class Question
+    public interface IStep
     {
-        public readonly string Id;
+    }
 
-        public string Q { get; }
+    public interface IBreakingStep : IStep
+    {
+    }
 
-        public Dictionary<string, Question[]> Routes = new Dictionary<string, Question[]>();
-        public Dictionary<string, Func<State, object, bool>> Preds = new Dictionary<string, Func<State, object, bool>>();
+    public interface ILabelStep : IStep
+    {
+        string Label { get; }
+    }
+    
 
-        public Question(string q, string id)
+
+    public class Line : ILabelStep
+    {
+        public string Label { get; }
+
+        public Line(string t)
         {
-            this.Id = id;
-            this.Q = q;
+            this.Label = t;
+        }
+    }
+
+    public class BranchOnLine : Line
+    {
+        public BranchOnLine(string t) : base(t)
+        {
         }
 
-        public Question RegisterRoute(string key, Question[] q)
+        
+    }
+
+    public class BranchOnState : IStep
+    {
+        public Dictionary<Predicate<State>, IStep[]> Preds = new Dictionary<Predicate<State>, IStep[]>();
+
+        public BranchOnState AddRoute(Predicate<State> p, params IStep[] qs)
+        {
+            Preds[p] = qs;
+            return this;
+        }
+    }
+
+    public class Question : Line, IBreakingStep
+    {
+        public readonly string Key;
+
+        public Dictionary<string, IStep[]> Routes = new Dictionary<string, IStep[]>();
+        public Dictionary<string, Func<State, object, bool>> Preds = new Dictionary<string, Func<State, object, bool>>();
+
+        public Question(string t, string key) : base(t)
+        {
+
+            this.Key = key;
+        }
+
+        public Question RegisterRoute(string key, IStep[] q)
         {
             Routes[key] = q;
             return this;
@@ -186,30 +248,30 @@ namespace ConsoleApplication1
             Preds[key] = (s, e) => p(e);
             return this;
         }
+    }
 
-        public Result<String> IsOk(string key, State s)
+    public class BranchQuestion : Question
+    {
+        public BranchQuestion(string t, string key) : base(t, key)
         {
-            if (Preds.Count == 0)
-            {
-                return Result.Ok(key ?? "");
-            }
-            foreach (var p in Preds)
-            {
-                if (Preds[p.Key](s, key))
-                {
-                    return Result.Ok(p.Key);
-                }
-            }
-            if (key == null && !String.IsNullOrEmpty(Q))
-            {
-                return Result.Fail<String>("Fejl1");
-            }
-            return Result.Ok("");
+
         }
     }
 
     public static class QuestionExtensions
     {
+
+        public static List<QA> TakeUntilNextBreak(this List<IStep> l)
+        {
+            List<QA> res = new List<QA>();
+            Result<IStep> next = TakeNextNonBreakingStep(l);
+            while (next.IsSuccess)
+            {
+                res.Add(new QA(next.Value));
+                next = TakeNextNonBreakingStep(l);
+            }
+            return res;
+        }
 
         public static Question OnYes(this Question jn, params Question[] q)
         {
@@ -263,6 +325,11 @@ namespace ConsoleApplication1
             return q;
         }
 
+        public static bool LastElementIsBreaking(this List<QA> qas)
+        {
+            return qas[qas.Count - 1].IsBreaking;
+        }
+
 
 
         public static string StringFormat(this string format, IDictionary<string, string> values)
@@ -270,6 +337,21 @@ namespace ConsoleApplication1
             foreach (var p in values)
                 format = format.Replace("{" + p.Key + "}", p.Value);
             return format;
+        }
+
+        public static Result<IStep> TakeNextNonBreakingStep(this List<IStep> f)
+        {
+            if (f.Count == 0)
+            {
+                return Result.Fail<IStep>("Ikke flere elementer");
+            }
+            var res = f[0];
+            if (res is IBreakingStep)
+            {
+                return Result.Fail<IStep>("Next step is breaking");
+            }
+            f.RemoveAt(0);
+            return Result.Ok(res);
         }
     }
 
