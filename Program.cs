@@ -43,8 +43,10 @@ namespace ConsoleApplication1
         private static IStep[] f =
         {
             q("Hej Knallert"),
-            q("Kan måger knalde?", "fugl"),
-            q("Sved er lækkert")
+            q("Kan måger knalde?").OnYes(q("Du er ulækker)),
+            q("Sved er lækkert {fugl}"),
+            q("Er lort smagfuldt?", "kaj"),
+            q("Vi ses {kaj}")
         };
 
         public static void Main(string[] args)
@@ -53,32 +55,21 @@ namespace ConsoleApplication1
             state.Set("carmodel", "Ford Mustang 1978");
             var hist = new List<string>();
             string q = null;
-            Result<List<QA>> res = Result.Fail<List<QA>>("Katten er grim");
+            var res = new List<Statement>();
             do
             {
+                Console.WriteLine("========================");
                 res = Exec(f.ToList(), state, localHist(hist, q));
-                if (res.IsFailure)
-                {
-                    Console.WriteLine(res.Error);
-                    q = null;
-                }
-                else
-                {
-                    foreach (var qa in res.Value)
+                foreach (var statement in res)
                     {
-                        if (qa.Answer != null)
+                        if (statement.Speaker == Statement.Chatter.Person)
                         {
-                            Console.WriteLine(qa.Answer);
-                            hist.Add(qa.Answer);
+                            hist.Add(statement.Chat);
                         }
-                        if (qa.Label != null)
-                        {
-                            Console.WriteLine(qa.Label);
-                        }
+                        Console.WriteLine(statement.Speaker + ": " + statement.Chat);
                     }
-                    q = res.Value.LastElementIsBreaking() ? Console.ReadLine() : null;
-                }
-            } while (!IsEndOfFlow(res));
+                    q = res[res.Count - 1].IsBreaking ? Console.ReadLine() : null;
+            } while (res[res.Count - 1].IsBreaking);
         }
 
         private static List<string> localHist(List<string> hist, string a)
@@ -91,58 +82,43 @@ namespace ConsoleApplication1
         return s;
         }
 
-        private static bool IsEndOfFlow(Result<List<QA>> res)
+        static List<Statement> Exec(List<IStep> flow, State st, List<string> hist)
         {
-            return !res.IsFailure && res.Value.Count == 0 && !res.Value.LastElementIsBreaking();
-        }
-
-
-        static Result<List<QA>> Exec(List<IStep> flow, State st, List<string> history)
-        {
-            ReplayHistory(flow, st, history);
-            var res = RunToNextBreak(flow, st);
-            if (res.IsSuccess && flow.Count > 0)
+            List<IStep> lines = RunToNextBreak(flow, st);
+            List<Statement> res = new List<Statement>();
+            foreach (var s in hist)
             {
-                res.Value.Add(new QA(flow[0]));
+                var q = lines.Last() as Question;
+                st.Set(q.Key, s);
+                res.AddRange(StepsToStatements(lines, st));
+                res.Add(Statement.HumanSays(s));
+                lines = RunToNextBreak(flow, st);
             }
+            res.AddRange(StepsToStatements(lines, st));
             return res;
         }
 
-        static Result<List<QA>> ReplayHistory(List<IStep> flow, State st, List<string> hist)
+        static List<Statement> StepsToStatements(List<IStep> steps, State st) {
+            var res = new List<Statement>();
+            foreach(var ss in steps) {
+                res.Add(Statement.RobotSays(ss as ILabelStep, st));
+            }
+            return res;
+
+        } 
+
+        static List<IStep> RunToNextBreak(List<IStep> flow, State st)
         {
-            Result<List<QA>> res = Result.Fail<List<QA>>("initial");
-            foreach (var s in hist)
-            {
-                res = RunToNextBreak(flow, st);
-                if (res.IsSuccess)
-                {
-                    var step = f[0];
-                    if (step is Question)
-                    {
-                        st.Set(((Question)step).Key, s);
-                        flow.RemoveAt(0);
-                        res.Value.Add(new QA(step, s));
-                    }
+            var res = new List<IStep>();
+            while (flow.Count > 0) {
+                var step = flow.TakeNext();
+                res.Add(step);
+                if (step is Question) {
+                    break;
                 }
             }
             return res;
-        }
-
-       
-
-        static Result<List<QA>> RunToNextBreak(List<IStep> flow, State st)
-        {
-            var res = new List<QA>();
-            Result<IStep> next = flow.TakeNextNonBreakingStep();
-            while (next.IsSuccess)
-            {
-                res.Add(new QA(next.Value));
-                next = flow.TakeNextNonBreakingStep();
-            } 
-            return Result.Ok(res);
-        }
-
-              
+        }              
 
         private static IStep q(string q)
         {
@@ -156,26 +132,31 @@ namespace ConsoleApplication1
      
     }
 
-    public class QA
+    public class Statement
     {
+        public enum Chatter {Robot, Person};
+
+        public readonly Chatter Speaker;
+        public readonly string Chat;
+
         public readonly bool IsBreaking;
-
-        public string Label { get; }
-
-        public string Answer { get; }
-
         public List<string> Alternatives;
 
-        public QA(IStep q)
+        private Statement(string q, Chatter chatter, bool IsBreaking)
         {
-            Label = ((ILabelStep) q)?.Label;
+            Speaker = chatter;
+            Chat = q;
             Alternatives = new List<string>();
-            IsBreaking = q is IBreakingStep;
+            this.IsBreaking = IsBreaking;
         }
 
-        public QA(IStep q, string a) : this(q)
-        {
-            Answer = a;
+        public static Statement RobotSays(ILabelStep q, State st) {
+            var s = q.Label.StringFormat(st.s);
+            return new Statement(s, Chatter.Robot, q is IBreakingStep);
+        }
+
+        public static Statement HumanSays(string q) {
+            return new Statement(q, Chatter.Person, false);
         }
     }
 
@@ -261,20 +242,16 @@ namespace ConsoleApplication1
     public static class QuestionExtensions
     {
 
-        public static List<QA> TakeUntilNextBreak(this List<IStep> l)
-        {
-            List<QA> res = new List<QA>();
-            Result<IStep> next = TakeNextNonBreakingStep(l);
-            while (next.IsSuccess)
-            {
-                res.Add(new QA(next.Value));
-                next = TakeNextNonBreakingStep(l);
-            }
+        public static IStep TakeNext(this List<IStep> flow) {
+            var res = flow[0];
+            flow.RemoveAt(0);
             return res;
         }
 
-        public static Question OnYes(this Question jn, params Question[] q)
+
+        public static Question OnYes(this IStep s, params Question[] q)
         {
+            var q = new Question()
             var res = On(jn, "Ja", q);
             if (!jn.Routes.ContainsKey("Nej"))
             {
@@ -325,33 +302,12 @@ namespace ConsoleApplication1
             return q;
         }
 
-        public static bool LastElementIsBreaking(this List<QA> qas)
-        {
-            return qas[qas.Count - 1].IsBreaking;
-        }
-
-
 
         public static string StringFormat(this string format, IDictionary<string, string> values)
         {
             foreach (var p in values)
                 format = format.Replace("{" + p.Key + "}", p.Value);
             return format;
-        }
-
-        public static Result<IStep> TakeNextNonBreakingStep(this List<IStep> f)
-        {
-            if (f.Count == 0)
-            {
-                return Result.Fail<IStep>("Ikke flere elementer");
-            }
-            var res = f[0];
-            if (res is IBreakingStep)
-            {
-                return Result.Fail<IStep>("Next step is breaking");
-            }
-            f.RemoveAt(0);
-            return Result.Ok(res);
         }
     }
 
