@@ -8,7 +8,7 @@ namespace ConsoleApplication1
 {
     public class SkadeChat
     {
-       /* private static Question[] bil =
+       private static IStep[] bil =
         {
             q("I Alka håndterer vi over 30.000 bilskader hvert år. Vil du have nogle generelle råd?")
                 .OnYes("Jeg har ingen råd, men nice try"),
@@ -28,7 +28,7 @@ namespace ConsoleApplication1
             q("Helmers autoværksted ringer til dig i morgen, så I kan aftale en tid")
         };
 
-        private static Question[] f2 =
+        private static IStep[] f2 =
         {
             q("Hvad hedder du?", "name"),
             q("").OnState("carmodel", s => s.s.ContainsKey("carmodel1"), q("Jeg er munken")),
@@ -38,12 +38,12 @@ namespace ConsoleApplication1
                 .On("Hest"),
             q("Hav en fortsat god dag")
         };
-*/
+
 
         private static IStep[] f =
         {
-            q("Hej Knallert"),
-            q("Kan måger knalde?").OnYes(q("Du er ulækker)),
+            q("Hej Knallert").OnYes("Jeg er en grimrian"),
+            q("Kan måger knalde?", "fugl").OnYes(q("Du er ulækker")),
             q("Sved er lækkert {fugl}"),
             q("Er lort smagfuldt?", "kaj"),
             q("Vi ses {kaj}")
@@ -52,8 +52,9 @@ namespace ConsoleApplication1
         public static void Main(string[] args)
         {
             var state = new State();
-            state.Set("carmodel", "Ford Mustang 1978");
             var hist = new List<string>();
+            var newHist = new List<string>();
+            state.Set("carmodel", "Ford Mustang 1978");
             string q = null;
             var res = new List<Statement>();
             do
@@ -64,12 +65,15 @@ namespace ConsoleApplication1
                     {
                         if (statement.Speaker == Statement.Chatter.Person)
                         {
-                            hist.Add(statement.Chat);
+                            newHist.Add(statement.Chat);
                         }
                         Console.WriteLine(statement.Speaker + ": " + statement.Chat);
                     }
                     q = res[res.Count - 1].IsBreaking ? Console.ReadLine() : null;
+                hist = newHist;
+                newHist = new List<String>();
             } while (res[res.Count - 1].IsBreaking);
+            
         }
 
         private static List<string> localHist(List<string> hist, string a)
@@ -88,8 +92,9 @@ namespace ConsoleApplication1
             List<Statement> res = new List<Statement>();
             foreach (var s in hist)
             {
-                var q = lines.Last() as Question;
-                st.Set(q.Key, s);
+                var q = lines.Last();                
+                st.Set((q as Question)?.Key, s);
+                flow.InsertRange(0, HandleAnswer(flow, q as Question, s, st));
                 res.AddRange(StepsToStatements(lines, st));
                 res.Add(Statement.HumanSays(s));
                 lines = RunToNextBreak(flow, st);
@@ -105,7 +110,19 @@ namespace ConsoleApplication1
             }
             return res;
 
-        } 
+        }
+
+        private static List<IStep> HandleAnswer(List<IStep> flow, Question q, string answer, State st) {
+            var res = new List<IStep>();
+            if (q == null || q.Routes.Count == 0) {
+                return res;
+            }
+            var p = q.Preds[answer];
+            if (p(st, answer)) {
+                res = q.Routes[answer].ToList();
+            }
+            return res;
+        }
 
         static List<IStep> RunToNextBreak(List<IStep> flow, State st)
         {
@@ -120,7 +137,7 @@ namespace ConsoleApplication1
             return res;
         }              
 
-        private static IStep q(string q)
+        private static ILabelStep q(string q)
         {
             return new Line(q);
         }
@@ -152,6 +169,12 @@ namespace ConsoleApplication1
 
         public static Statement RobotSays(ILabelStep q, State st) {
             var s = q.Label.StringFormat(st.s);
+            if (q is IBreakingStep) {
+                var qu = q as Question;
+                if (qu.Routes.Count > 0) {
+                    s += " (" + String.Join(", ", qu.Preds.Keys) + ")";
+                }
+            }
             return new Statement(s, Chatter.Robot, q is IBreakingStep);
         }
 
@@ -249,25 +272,26 @@ namespace ConsoleApplication1
         }
 
 
-        public static Question OnYes(this IStep s, params Question[] q)
+        public static Question OnYes(this ILabelStep s, params IStep[] qs)
         {
-            var q = new Question()
-            var res = On(jn, "Ja", q);
-            if (!jn.Routes.ContainsKey("Nej"))
-            {
-                jn.OnNo("");
-            }
-            return res;
+            return s.ToQuestion()
+                .On("Ja", e => "Ja".Equals(e), qs)
+                .On("Nej", e => !"Ja".Equals(e));
         }
 
-        public static Question OnYes(this Question q, string s)
+        public static Question OnYes(this ILabelStep q, string s)
         {
-            return OnYes(q, new Question(s, null));
+            return OnYes(q, new Line(s));
         }
 
         public static Question OnNo(this Question q, string s)
         {
             return OnNo(q, new Question(s, null));
+        }
+
+        public static Question ToQuestion (this ILabelStep st) {
+            var key = (st as Question)?.Key;
+            return new Question(st.Label, key);
         }
 
 
@@ -280,7 +304,7 @@ namespace ConsoleApplication1
             return On(jn, "Nej", q);
         }
 
-        public static Question On(this Question q, string key, Predicate<object> p, params Question[] qs)
+        public static Question On(this Question q, string key, Predicate<object> p, params IStep[] qs)
         {
             return q.RegisterRoute(key, qs).RegisterPred(key, p);
         }
@@ -322,7 +346,9 @@ namespace ConsoleApplication1
 
         public State Set(string key, string val)
         {
-            s[key] = val;
+            if (key != null) {
+                s[key] = val;
+            }
             return this;
         }
     }
