@@ -8,8 +8,8 @@ namespace ConsoleApplication1
 {
     public class SkadeChat
     {
-       private static IStep[] bil =
-        {
+        private static IStep[] bil =
+         {
             q("I Alka håndterer vi over 30.000 bilskader hvert år. Vil du have nogle generelle råd?")
                 .OnYes("Jeg har ingen råd, men nice try"),
             q("Inden vi starter skal vi lige tjekke de oplysninger vi har om dig"),
@@ -31,7 +31,7 @@ namespace ConsoleApplication1
         private static IStep[] f2 =
         {
             q("Hvad hedder du?", "name"),
-            q("").OnState("carmodel", s => s.s.ContainsKey("carmodel1"), q("Jeg er munken")),
+            //q("").OnState("carmodel", s => s.s.ContainsKey("carmodel1"), q("Jeg er munken")),
             q("Hej {name}, det er aldrig rart når man er ude for et uheld."),
             q("Hvad er gået i stykker?")
                 .On("Bil", bil)
@@ -60,20 +60,20 @@ namespace ConsoleApplication1
             do
             {
                 Console.WriteLine("========================");
-                res = Exec(f.ToList(), state, localHist(hist, q));
+                res = Exec(f2.ToList(), state, localHist(hist, q));
                 foreach (var statement in res)
+                {
+                    if (statement.Speaker == Statement.Chatter.Person)
                     {
-                        if (statement.Speaker == Statement.Chatter.Person)
-                        {
-                            newHist.Add(statement.Chat);
-                        }
-                        Console.WriteLine(statement.Speaker + ": " + statement.Chat);
+                        newHist.Add(statement.Chat);
                     }
-                    q = res[res.Count - 1].IsBreaking ? Console.ReadLine() : null;
+                    Console.WriteLine(statement.Speaker + ": " + statement.Chat);
+                }
+                q = res[res.Count - 1].IsBreaking ? Console.ReadLine() : null;
                 hist = newHist;
                 newHist = new List<String>();
             } while (res[res.Count - 1].IsBreaking);
-            
+
         }
 
         private static List<string> localHist(List<string> hist, string a)
@@ -83,7 +83,7 @@ namespace ConsoleApplication1
             {
                 s.Add(a);
             }
-        return s;
+            return s;
         }
 
         static List<Statement> Exec(List<IStep> flow, State st, List<string> hist)
@@ -92,7 +92,7 @@ namespace ConsoleApplication1
             List<Statement> res = new List<Statement>();
             foreach (var s in hist)
             {
-                var q = lines.Last();                
+                var q = lines.Last();
                 st.Set((q as Question)?.Key, s);
                 flow.InsertRange(0, HandleAnswer(flow, q as Question, s, st));
                 res.AddRange(StepsToStatements(lines, st));
@@ -103,39 +103,48 @@ namespace ConsoleApplication1
             return res;
         }
 
-        static List<Statement> StepsToStatements(List<IStep> steps, State st) {
+        static List<Statement> StepsToStatements(List<IStep> steps, State st)
+        {
             var res = new List<Statement>();
-            foreach(var ss in steps) {
+            foreach (var ss in steps)
+            {
                 res.Add(Statement.RobotSays(ss as ILabelStep, st));
             }
             return res;
 
         }
 
-        private static List<IStep> HandleAnswer(List<IStep> flow, Question q, string answer, State st) {
-            var res = new List<IStep>();
-            if (q == null || q.Routes.Count == 0) {
-                return res;
+        private static List<IStep> HandleAnswer(List<IStep> flow, Question q, string answer, State st)
+        {
+            if (q == null || q.Routes.Count == 0)
+            {
+                return new List<IStep>();
             }
-            var p = q.Preds[answer];
-            if (p(st, answer)) {
-                res = q.Routes[answer].ToList();
+            foreach (var pred in q.Preds)
+            {
+                if (pred.Value(st, answer))
+                {
+                    return q.Routes[pred.Key].ToList();
+                }
             }
-            return res;
+            // this is error
+            return new List<IStep>();
         }
 
         static List<IStep> RunToNextBreak(List<IStep> flow, State st)
         {
             var res = new List<IStep>();
-            while (flow.Count > 0) {
+            while (flow.Count > 0)
+            {
                 var step = flow.TakeNext();
                 res.Add(step);
-                if (step is Question) {
+                if (step is Question)
+                {
                     break;
                 }
             }
             return res;
-        }              
+        }
 
         private static ILabelStep q(string q)
         {
@@ -146,12 +155,12 @@ namespace ConsoleApplication1
         {
             return new Question(q, id);
         }
-     
+
     }
 
     public class Statement
     {
-        public enum Chatter {Robot, Person};
+        public enum Chatter { Robot, Person };
 
         public readonly Chatter Speaker;
         public readonly string Chat;
@@ -167,18 +176,22 @@ namespace ConsoleApplication1
             this.IsBreaking = IsBreaking;
         }
 
-        public static Statement RobotSays(ILabelStep q, State st) {
+        public static Statement RobotSays(ILabelStep q, State st)
+        {
             var s = q.Label.StringFormat(st.s);
-            if (q is IBreakingStep) {
+            if (q is IBreakingStep)
+            {
                 var qu = q as Question;
-                if (qu.Routes.Count > 0) {
+                if (qu.Routes.Count > 0)
+                {
                     s += " (" + String.Join(", ", qu.Preds.Keys) + ")";
                 }
             }
             return new Statement(s, Chatter.Robot, q is IBreakingStep);
         }
 
-        public static Statement HumanSays(string q) {
+        public static Statement HumanSays(string q)
+        {
             return new Statement(q, Chatter.Person, false);
         }
     }
@@ -195,7 +208,7 @@ namespace ConsoleApplication1
     {
         string Label { get; }
     }
-    
+
 
 
     public class Line : ILabelStep
@@ -214,7 +227,7 @@ namespace ConsoleApplication1
         {
         }
 
-        
+
     }
 
     public class BranchOnState : IStep
@@ -246,7 +259,7 @@ namespace ConsoleApplication1
             Routes[key] = q;
             return this;
         }
-    
+
         public Question RegisterPred(string key, Predicate<Object> p)
         {
             Preds[key] = (s, e) => p(e);
@@ -265,7 +278,8 @@ namespace ConsoleApplication1
     public static class QuestionExtensions
     {
 
-        public static IStep TakeNext(this List<IStep> flow) {
+        public static IStep TakeNext(this List<IStep> flow)
+        {
             var res = flow[0];
             flow.RemoveAt(0);
             return res;
@@ -279,47 +293,49 @@ namespace ConsoleApplication1
                 .On("Nej", e => !"Ja".Equals(e));
         }
 
+        public static Question OnNo(this ILabelStep s, params IStep[] qs)
+        {
+            return s.ToQuestion()
+                .On("Ja", e => "Ja".Equals(e))
+                .On("Nej", e => !"Ja".Equals(e), qs);
+        }
+
         public static Question OnYes(this ILabelStep q, string s)
         {
             return OnYes(q, new Line(s));
         }
 
-        public static Question OnNo(this Question q, string s)
+        public static Question OnNo(this ILabelStep q, string s)
         {
             return OnNo(q, new Question(s, null));
         }
 
-        public static Question ToQuestion (this ILabelStep st) {
+        public static Question ToQuestion(this ILabelStep st)
+        {
             var key = (st as Question)?.Key;
             return new Question(st.Label, key);
         }
 
 
-        public static Question OnNo(this Question jn, params Question[] q)
-        {
-            if (!jn.Routes.ContainsKey("Ja"))
-            {
-                jn.OnYes("");
-            }
-            return On(jn, "Nej", q);
-        }
+        
 
         public static Question On(this Question q, string key, Predicate<object> p, params IStep[] qs)
         {
             return q.RegisterRoute(key, qs).RegisterPred(key, p);
         }
 
-        public static Question On(this Question q, string key, params Question[] qs)
+        public static Question On(this ILabelStep q, string key, params IStep[] qs)
         {
-            return On(q, key, s => s.Equals(key), qs);
+            var qq = q as Question ?? ToQuestion(q);
+            return On(qq, key, s => s.Equals(key), qs);
         }
 
-        public static Question OnInterval(this Question q, int from, int to, params Question[] qs)
+        public static Question OnInterval(this Question q, int from, int to, params IStep[] qs)
         {
             return q.RegisterPred(from + "-" + to, s => Int32.Parse(s.ToString()) >= from && to >= Int32.Parse(s.ToString()));
         }
 
-        public static Question OnState(this Question q, string key, Predicate<State> p, params Question[] qs)
+        public static Question OnState(this Question q, string key, Predicate<State> p, params IStep[] qs)
         {
             q.Preds[key] = (s, i) => p(s);
             q.Routes[key] = qs;
@@ -346,7 +362,8 @@ namespace ConsoleApplication1
 
         public State Set(string key, string val)
         {
-            if (key != null) {
+            if (key != null)
+            {
                 s[key] = val;
             }
             return this;
@@ -514,4 +531,3 @@ namespace ConsoleApplication1
         }
     }
 }
-
