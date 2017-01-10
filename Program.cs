@@ -28,8 +28,17 @@ namespace ConsoleApplication1
                 .On("lygterne")
                 .On("venstre fordør"),
             q("Hvor mange var I i bilen?", "passengers").On("1").On("2").On("3").On("4"),
-        q("Kære {name}. Vi har registreret at du {whereandwhen} har haft en skade på din {carmodel}, hvor I var {passengers} i bilen og {damage} blev beskadiget."),
+            q("Kære {name}. Vi har registreret at du {whereandwhen} har haft en skade på din {carmodel}, hvor I var {passengers} i bilen og {damage} blev beskadiget."),
             q("Helmers autoværksted ringer til dig i morgen, så I kan aftale en tid")
+        };
+
+        private static IStep[] hest =
+        {
+            If(s => s.s["name"].Equals("Janus"), 
+                q("Folk der hedder {name} er mærkelige"))
+            .Else(q("Jeg tror ikke på at du hedder {name}")),
+            q("Fortæl mig hvad der skete med din hest?", "accident").On("rideulykke").On("anden ulykke"),
+            q("Skete din {accident} fordi du var fuld?").OnNo("Så dækker vi måske").OnYes("Så dækker vi ikke")
         };
 
         private static IStep[] f2 =
@@ -38,17 +47,15 @@ namespace ConsoleApplication1
             q("Hej {name}, det er aldrig rart når man er ude for et uheld."),
             q("Hvad er gået i stykker?")
                 .On("Bil", bil)
-                .On("Hest"),
+                .On("Hest", hest),
             q("Hav en fortsat god dag")
         };
 
 
         public static void Main(string[] args)
         {
-            
-            var hist = new List<string>();
+            var hist = new List<string>() {"Poul", "Bil", "Ja", "Nej", "Ford Focus", "fredag morgen ved Bilka", "fronten", "2"};
             var newHist = new List<string>();
-            
             string q = null;
             var res = Result.Ok(new List<Statement>());
             do
@@ -56,7 +63,7 @@ namespace ConsoleApplication1
                 var state = new State();
                 state.Set("carmodel", "Ford Mustang 1978");
                 Console.WriteLine("========================");
-                res = Exec(f2.ToList(), state, LocalHist(hist, q));
+                res = Exec(f2.ToList(), state, hist.AddToList(q));
                 if (res.IsFailure)
                 {
                     Console.WriteLine(res.Error);
@@ -78,15 +85,6 @@ namespace ConsoleApplication1
 
         }
 
-        private static List<string> LocalHist(List<string> hist, string a)
-        {
-            List<string> s = new List<string>(hist);
-            if (a != null)
-            {
-                s.Add(a);
-            }
-            return s;
-        }
 
         static Result<List<Statement>> Exec(List<IStep> flow, State st, List<string> hist)
         {
@@ -97,7 +95,7 @@ namespace ConsoleApplication1
                 var q = lines.Last();
                 st.Set((q as Question)?.Key, s);
 
-                var a = HandleAnswer(flow, q as IBranchStep, s, st);
+                var a = HandleAnswer(q as IBranchStep, s, st);
                 if (a.IsFailure)
                 {
                     return Result.Fail<List<Statement>>(a.Error);
@@ -122,7 +120,7 @@ namespace ConsoleApplication1
 
         }
 
-        private static Result<List<IStep>> HandleAnswer(List<IStep> flow, IBranchStep q, string answer, State st)
+        private static Result<List<IStep>> HandleAnswer(IBranchStep q, string answer, State st)
         {
             var res = Result.Ok(new List<IStep>());
             if (q == null || q.GetRoutes().Count == 0)
@@ -138,12 +136,7 @@ namespace ConsoleApplication1
             {
                 if (pred.Value(st, answer))
                 {
-                    {
-                        var routes = q.GetRoutes();
-                        var r = routes[pred.Key];
-                        var s = r.ToList();
-                        return Result.Ok(s);
-                    }
+                    return Result.Ok(q.GetRoutes()[pred.Key].ToList());
                 }
             }
             return Result.Fail<List<IStep>>($"Du kan ikke svare '{answer}' på dette spørgsmål");
@@ -152,22 +145,17 @@ namespace ConsoleApplication1
         static List<IStep> RunToNextBreak(List<IStep> flow, State st)
         {
             var res = new List<IStep>();
-            while (flow.Count > 0)
+            IStep step = null;
+            while (flow.Count > 0 && !(step is Question))
             {
-                var step = flow.TakeNext();
-
+                step = flow.TakeNext();
                 if (step is BranchOnState)
                 {
-                    var r = FindRouteToPred(step as IBranchStep, "", st).Value;
-                    flow.InsertRange(0, r);
+                    flow.InsertRange(0, FindRouteToPred(step as IBranchStep, "", st).Value);
                 }
                 else
                 {
                     res.Add(step);
-                }
-                if (step is Question)
-                {
-                    break;
                 }
             }
             return res;
@@ -264,15 +252,16 @@ namespace ConsoleApplication1
 
         public BranchOnState(Predicate<State> p, params IStep[] qs)
         {
-            AddRoute("if", p, qs);
-            AddRoute("else", s => !p(s));
+            preds["if"] = (s, e) => p(s);
+            preds["else"] = (s, e) => !p(s);
+            routes["if"] = qs;
+            routes["else"] = new IStep[0];
         }
         
 
-        public BranchOnState AddRoute(string key, Predicate<State> p, params IStep[] qs)
+        public BranchOnState Else(params IStep[] qs)
         {
-            routes[key] = qs;
-            preds[key] = (s, e) => p(s);
+            routes["else"] = qs;
             return this;
         }
 
@@ -334,6 +323,16 @@ namespace ConsoleApplication1
 
     public static class QuestionExtensions
     {
+        public static List<string> AddToList(this List<string> hist, string a)
+        {
+            List<string> s = new List<string>(hist);
+            if (a != null)
+            {
+                s.Add(a);
+            }
+            return s;
+        }
+
         public static IStep TakeNext(this List<IStep> flow)
         {
             var res = flow[0];
@@ -341,26 +340,18 @@ namespace ConsoleApplication1
             return res;
         }
 
-        public static BranchOnState Else(this BranchOnState b, params IStep[] qs)
-        {
-            var p = b.GetPreds()["if"];
-            b.AddRoute("else", s => !p(s, null), qs);
-            return b;
-        }
-
 
         public static Question OnYes(this ILabelStep s, params IStep[] qs)
         {
-            return s.ToQuestion()
-                .On("Ja", e => "Ja".Equals(e), qs)
-                .On("Nej", e => !"Ja".Equals(e));
+
+            var res = s.ToQuestion().On("Ja", e => "Ja".Equals(e), qs);
+            return res.GetRoutes().ContainsKey("Nej") ? res: res.On("Nej", e => !"Ja".Equals(e));
         }
 
         public static Question OnNo(this ILabelStep s, params IStep[] qs)
         {
-            return s.ToQuestion()
-                .On("Ja", e => "Ja".Equals(e))
-                .On("Nej", e => !"Ja".Equals(e), qs);
+            var res = s.ToQuestion().On("Nej", e => !"Ja".Equals(e), qs);
+            return res.GetRoutes().ContainsKey("Ja") ? res : res.On("Ja", e => "Ja".Equals(e));
         }
 
         public static Question OnYes(this ILabelStep q, string s)
@@ -370,7 +361,7 @@ namespace ConsoleApplication1
 
         public static Question OnNo(this ILabelStep q, string s)
         {
-            return OnNo(q, new Question(s, null));
+            return OnNo(q, new Line(s));
         }
 
         public static Question ToQuestion(this ILabelStep st)
@@ -395,12 +386,6 @@ namespace ConsoleApplication1
             var qq = ToQuestion(q);
             return On(qq, key, s => s.Equals(key), qs);
         }
-
-        //public static BranchQuestion OnInterval(this IBranchStep q, int from, int to, params IStep[] qs)
-        //{
-        //    return q.RegisterPred(from + "-" + to, s => Int32.Parse(s.ToString()) >= from && to >= Int32.Parse(s.ToString()));
-        //}
-
 
         public static string StringFormat(this string format, IDictionary<string, string> values)
         {
