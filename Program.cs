@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Web.UI;
 
 
 namespace ConsoleApplication1
@@ -13,7 +14,7 @@ namespace ConsoleApplication1
             q("I Alka håndterer vi over 30.000 bilskader hvert år. Vil du have nogle generelle råd?")
                 .OnYes("Jeg har ingen råd, men nice try"),
             q("Inden vi starter skal vi lige tjekke de oplysninger vi har om dig"),
-            If(s => !s.s.ContainsKey("carmodel"), 
+            If("Vi kender bilen", s => !s.s.ContainsKey("carmodel"), 
                 q("Vi har desværre ingen oplysninger om din bil."),
                 q("Indtast dine biloplysninger", "carmodel"),
                 q("Vi har nu registreret at din bil er en {carmodel}"))
@@ -34,9 +35,6 @@ namespace ConsoleApplication1
 
         private static IStep[] hest =
         {
-            If(s => s.s["name"].Equals("Janus"), 
-                q("Folk der hedder {name} er mærkelige"))
-            .Else(q("Jeg tror ikke på at du hedder {name}")),
             q("Fortæl mig hvad der skete med din hest?", "accident").On("rideulykke").On("anden ulykke"),
             q("Skete din {accident} fordi du var fuld?").OnNo("Så dækker vi måske").OnYes("Så dækker vi ikke")
         };
@@ -46,15 +44,61 @@ namespace ConsoleApplication1
             q("Hvad hedder du?", "name"),
             q("Hej {name}, det er aldrig rart når man er ude for et uheld."),
             q("Hvad er gået i stykker?")
-                .On("Bil", bil)
-                .On("Hest", hest),
+                .On("Hest", hest)
+                .On("Bil", bil),
             q("Hav en fortsat god dag")
         };
 
 
         public static void Main(string[] args)
         {
-            var hist = new List<string>() {"Poul", "Bil", "Ja", "Nej", "Ford Focus", "fredag morgen ved Bilka", "fronten", "2"};
+            State s = new State();
+            Console.WriteLine(RenderCode2Flow(f2.ToList(), s));
+        }
+
+        private static string RenderCode2Flow(List<IStep> flow, State state)
+        {
+            var res = "";
+            foreach (var s in flow)
+            {
+                var r = "";
+                var q = s as Question;
+                var ibs = s as IBranchStep;
+                var ils = s as ILabelStep;
+
+                var postLabel = "";
+                if (q?.Key != null)
+                {
+                    state.Set(q.Key, "'" + q.Key + "'");
+                    postLabel = " (" + q.Key + ")";
+                }
+                if (ibs != null)
+                {
+                    var label = ibs.Tag.StringFormat(state.s);
+                    
+                    r = "switch (" + label + postLabel + ") {" + Environment.NewLine;
+                    foreach (var key in ibs.GetPreds().Keys)
+                    {
+                        r += "case " + key + ":" + Environment.NewLine;
+                        r += RenderCode2Flow(ibs.GetRoutes()[key].ToList(), state);
+                        r += "break;" + Environment.NewLine;
+                    }
+                    r += "}" + Environment.NewLine;
+                }
+                else
+                {
+
+                    var label = ils?.Label.StringFormat(state.s);
+                    r += label + postLabel + ";" + Environment.NewLine;
+                }
+                res += r;
+            }
+            return res;
+        }
+
+        public static void Main1(string[] args)
+        {
+            var hist = new List<string>() {"Poul", "Bil"};//{"Poul", "Bil", "Ja", "Nej", "Ford Focus", "fredag morgen ved Bilka", "fronten", "2"};
             var newHist = new List<string>();
             string q = null;
             var res = Result.Ok(new List<Statement>());
@@ -171,9 +215,9 @@ namespace ConsoleApplication1
             return new Question(q, id);
         }
 
-        private static BranchOnState If(Predicate<State> p, params IStep[] qs)
+        private static BranchOnState If(string tag, Predicate<State> p, params IStep[] qs)
         {
-            return new BranchOnState(p, qs);
+            return new BranchOnState(tag, p, qs);
         }
     }
 
@@ -230,6 +274,7 @@ namespace ConsoleApplication1
 
     public interface IBranchStep : IStep
     {
+        string Tag { get; }
         Dictionary<string, IStep[]> GetRoutes();
         Dictionary<string, Func<State, object, bool>> GetPreds();
     }
@@ -248,10 +293,11 @@ namespace ConsoleApplication1
     {
         private readonly Dictionary<string, IStep[]> routes = new Dictionary<string, IStep[]>();
         private readonly Dictionary<string, Func<State, object, bool>> preds = new Dictionary<string, Func<State, object, bool>>();
+        public string Tag { get; }
 
-
-        public BranchOnState(Predicate<State> p, params IStep[] qs)
+        public BranchOnState(string tag, Predicate<State> p, params IStep[] qs)
         {
+            Tag = tag;
             preds["if"] = (s, e) => p(s);
             preds["else"] = (s, e) => !p(s);
             routes["if"] = qs;
@@ -277,25 +323,31 @@ namespace ConsoleApplication1
         }
     }
 
-    public class Question : Line, IBreakingStep
+    public class Question : IBreakingStep, ILabelStep
     {
+        public string Label { get; }
         public readonly string Key;
 
-        public Question(string t, string key) : base(t)
+        public Question(string t, string key)
         {
+            this.Label = t;
             this.Key = key;
         }
 
 
+       
     }
 
     public class BranchQuestion : Question, IBranchStep
     {
+
+        public string Tag { get; }
         private readonly Dictionary<string, IStep[]> routes = new Dictionary<string, IStep[]>();
         private readonly Dictionary<string, Func<State, object, bool>> preds = new Dictionary<string, Func<State, object, bool>>();
 
         public BranchQuestion(string t, string key) : base(t, key)
         {
+            Tag = t;
         }
 
         public BranchQuestion RegisterRoute(string key, IStep[] q)
@@ -341,25 +393,25 @@ namespace ConsoleApplication1
         }
 
 
-        public static Question OnYes(this ILabelStep s, params IStep[] qs)
+        public static BranchQuestion OnYes(this ILabelStep s, params IStep[] qs)
         {
 
             var res = s.ToQuestion().On("Ja", e => "Ja".Equals(e), qs);
             return res.GetRoutes().ContainsKey("Nej") ? res: res.On("Nej", e => !"Ja".Equals(e));
         }
 
-        public static Question OnNo(this ILabelStep s, params IStep[] qs)
+        public static BranchQuestion OnNo(this ILabelStep s, params IStep[] qs)
         {
             var res = s.ToQuestion().On("Nej", e => !"Ja".Equals(e), qs);
             return res.GetRoutes().ContainsKey("Ja") ? res : res.On("Ja", e => "Ja".Equals(e));
         }
 
-        public static Question OnYes(this ILabelStep q, string s)
+        public static BranchQuestion OnYes(this ILabelStep q, string s)
         {
             return OnYes(q, new Line(s));
         }
 
-        public static Question OnNo(this ILabelStep q, string s)
+        public static BranchQuestion OnNo(this ILabelStep q, string s)
         {
             return OnNo(q, new Line(s));
         }
