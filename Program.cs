@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
@@ -49,11 +49,22 @@ namespace ConsoleApplication1
             q("Hav en fortsat god dag")
         };
 
+        //private static IStep[] f2 =
+        //{
+        //    q("Hej Michael"),
+        //    q("Hvor gammel er du?", "age"),
+        //    q("du er {age} år gammel"),
+        //    If("Branch on age", s => int.Parse(s.Get("age")) > 12, q("du er godt nok gammel")).Else(q("du er godt nok ung")),
+        //    q("farvel")
+
+
+        //};
+
 
         public static void Main(string[] args)
         {
-            State s = new State();
-            Console.WriteLine(RenderCode2Flow(f2.ToList(), s));
+            RunChat();
+            //Console.WriteLine(RenderCode2Flow(f2.ToList(), new State()));
         }
 
         private static string RenderCode2Flow(List<IStep> flow, State state)
@@ -96,9 +107,9 @@ namespace ConsoleApplication1
             return res;
         }
 
-        public static void Main1(string[] args)
+        public static void RunChat()
         {
-            var hist = new List<string>() {"Poul", "Bil"};//{"Poul", "Bil", "Ja", "Nej", "Ford Focus", "fredag morgen ved Bilka", "fronten", "2"};
+            var hist = new List<string>(); //{"Poul", "Bil"};//{"Poul", "Bil", "Ja", "Nej", "Ford Focus", "fredag morgen ved Bilka", "fronten", "2"};
             var newHist = new List<string>();
             string q = null;
             var res = Result.Ok(new List<Statement>());
@@ -174,17 +185,17 @@ namespace ConsoleApplication1
             return FindRouteToPred(q, answer, st);
         }
 
-        private static Result<List<IStep>> FindRouteToPred(IBranchStep q, string answer, State st)
+private static Result<List<IStep>> FindRouteToPred(IBranchStep q, string answer, State st)
+{
+    foreach (var pred in q.GetPreds())
+    {
+        if (pred.Value(st, answer))
         {
-            foreach (var pred in q.GetPreds())
-            {
-                if (pred.Value(st, answer))
-                {
-                    return Result.Ok(q.GetRoutes()[pred.Key].ToList());
-                }
-            }
-            return Result.Fail<List<IStep>>($"Du kan ikke svare '{answer}' på dette spørgsmål");
+            return Result.Ok(q.GetRoutes()[pred.Key].ToList());
         }
+    }
+    return Result.Fail<List<IStep>>($"Du kan ikke svare '{answer}' på dette spørgsmål");
+}
 
         static List<IStep> RunToNextBreak(List<IStep> flow, State st)
         {
