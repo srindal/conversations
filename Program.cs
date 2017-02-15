@@ -1,8 +1,7 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Web.UI;
 
 
 namespace ConsoleApplication1
@@ -14,7 +13,7 @@ namespace ConsoleApplication1
             q("I Alka håndterer vi over 30.000 bilskader hvert år. Vil du have nogle generelle råd?")
                 .OnYes("Jeg har ingen råd, men nice try"),
             q("Inden vi starter skal vi lige tjekke de oplysninger vi har om dig"),
-            If("Vi kender bilen", s => !s.s.ContainsKey("carmodel"), 
+            If("Vi kender bilen", s => !s.s.ContainsKey("carmodel"),
                 q("Vi har desværre ingen oplysninger om din bil."),
                 q("Indtast dine biloplysninger", "carmodel"),
                 q("Vi har nu registreret at din bil er en {carmodel}"))
@@ -44,81 +43,39 @@ namespace ConsoleApplication1
             q("Hvad hedder du?", "name"),
             q("Hej {name}, det er aldrig rart når man er ude for et uheld."),
             q("Hvad er gået i stykker?")
-                .On("Hest", hest)
-                .On("Bil", bil),
+                .On("Bil", bil)
+                .On("Hest", hest),
             q("Hav en fortsat god dag")
         };
 
-        //private static IStep[] f2 =
-        //{
-        //    q("Hej Michael"),
-        //    q("Hvor gammel er du?", "age"),
-        //    q("du er {age} år gammel"),
-        //    If("Branch on age", s => int.Parse(s.Get("age")) > 12, q("du er godt nok gammel")).Else(q("du er godt nok ung")),
-        //    q("farvel")
-
-
-        //};
-
+        private static IStep[] questions =
+        {
+            q("Er du programmør?").OnNo(q("Ok, farvel")).OnYes(
+                q("Sejt, så har jeg nogle spørgsmål til dig"),
+                q("Hvad  er dit yndlingsprogrammeringssprog?", "favlang"),
+                If("fav is f#", s => s.Get("favlang").Equals("f#"), q("Du er en hård banan")).Else(q("Du virker ellers som VB-typen")),
+                q("Coding rocks, skriv noget sej {favlang}-kode"))
+        };
 
         public static void Main(string[] args)
         {
-            RunChat();
-            //Console.WriteLine(RenderCode2Flow(f2.ToList(), new State()));
+            //var state = new State();
+            ////state.Set("carmodel", "Ford Mustang 1978");
+            //var hist = new List<string>();// {"Poul", "Bil", "Ja", "Nej", "Ford Focus", "fredag morgen ved Bilka", "fronten", "2" };
+            //RunChat(questions, hist, state);
+            Console.WriteLine(RenderCode2Flow(questions.ToList(), new State()));
         }
 
-        private static string RenderCode2Flow(List<IStep> flow, State state)
+        private static void RunChat(IStep[] flow, List<string> hist, State origState)
         {
-            var res = "";
-            foreach (var s in flow)
-            {
-                var r = "";
-                var q = s as Question;
-                var ibs = s as IBranchStep;
-                var ils = s as ILabelStep;
-
-                var postLabel = "";
-                if (q?.Key != null)
-                {
-                    state.Set(q.Key, "'" + q.Key + "'");
-                    postLabel = " (" + q.Key + ")";
-                }
-                if (ibs != null)
-                {
-                    var label = ibs.Tag.StringFormat(state.s);
-                    
-                    r = "switch (" + label + postLabel + ") {" + Environment.NewLine;
-                    foreach (var key in ibs.GetPreds().Keys)
-                    {
-                        r += "case " + key + ":" + Environment.NewLine;
-                        r += RenderCode2Flow(ibs.GetRoutes()[key].ToList(), state);
-                        r += "break;" + Environment.NewLine;
-                    }
-                    r += "}" + Environment.NewLine;
-                }
-                else
-                {
-
-                    var label = ils?.Label.StringFormat(state.s);
-                    r += label + postLabel + ";" + Environment.NewLine;
-                }
-                res += r;
-            }
-            return res;
-        }
-
-        public static void RunChat()
-        {
-            var hist = new List<string>(); //{"Poul", "Bil"};//{"Poul", "Bil", "Ja", "Nej", "Ford Focus", "fredag morgen ved Bilka", "fronten", "2"};
             var newHist = new List<string>();
             string q = null;
             var res = Result.Ok(new List<Statement>());
             do
             {
-                var state = new State();
-                state.Set("carmodel", "Ford Mustang 1978");
+                var state = new State(origState);
                 Console.WriteLine("========================");
-                res = Exec(f2.ToList(), state, hist.AddToList(q));
+                res = Exec(flow.ToList(), state, hist.AddToList(q));
                 if (res.IsFailure)
                 {
                     Console.WriteLine(res.Error);
@@ -140,7 +97,45 @@ namespace ConsoleApplication1
 
         }
 
+        private static string RenderCode2Flow(List<IStep> flow, State state)
+        {
+            var res = "";
+            foreach (var s in flow)
+            {
+                var r = "";
+                var q = s as Question;
+                var ibs = s as IBranchStep;
+                var ils = s as ILabelStep;
 
+                var postLabel = "";
+                if (q?.Key != null)
+                {
+                    state.Set(q.Key, "'" + q.Key + "'");
+                    postLabel = " (" + q.Key + ")";
+                }
+                if (ibs != null)
+                {
+                    var label = ibs.Tag.StringFormat(state.s);
+
+                    r = "switch (" + label + postLabel + ") {" + Environment.NewLine;
+                    foreach (var key in ibs.GetPreds().Keys)
+                    {
+                        r += "case " + key + ":" + Environment.NewLine;
+                        r += RenderCode2Flow(ibs.GetRoutes()[key].ToList(), state);
+                        r += "break;" + Environment.NewLine;
+                    }
+                    r += "}" + Environment.NewLine;
+                }
+                else
+                {
+
+                    var label = ils?.Label.StringFormat(state.s);
+                    r += label + postLabel + ";" + Environment.NewLine;
+                }
+                res += r;
+            }
+            return res;
+        }
         static Result<List<Statement>> Exec(List<IStep> flow, State st, List<string> hist)
         {
             List<IStep> lines = RunToNextBreak(flow, st);
@@ -185,17 +180,17 @@ namespace ConsoleApplication1
             return FindRouteToPred(q, answer, st);
         }
 
-private static Result<List<IStep>> FindRouteToPred(IBranchStep q, string answer, State st)
-{
-    foreach (var pred in q.GetPreds())
-    {
-        if (pred.Value(st, answer))
+        private static Result<List<IStep>> FindRouteToPred(IBranchStep q, string answer, State st)
         {
-            return Result.Ok(q.GetRoutes()[pred.Key].ToList());
+            foreach (var pred in q.GetPreds())
+            {
+                if (pred.Value(st, answer))
+                {
+                    return Result.Ok(q.GetRoutes()[pred.Key].ToList());
+                }
+            }
+            return Result.Fail<List<IStep>>($"Du kan ikke svare '{answer}' på dette spørgsmål");
         }
-    }
-    return Result.Fail<List<IStep>>($"Du kan ikke svare '{answer}' på dette spørgsmål");
-}
 
         static List<IStep> RunToNextBreak(List<IStep> flow, State st)
         {
@@ -314,7 +309,7 @@ private static Result<List<IStep>> FindRouteToPred(IBranchStep q, string answer,
             routes["if"] = qs;
             routes["else"] = new IStep[0];
         }
-        
+
 
         public BranchOnState Else(params IStep[] qs)
         {
@@ -334,19 +329,16 @@ private static Result<List<IStep>> FindRouteToPred(IBranchStep q, string answer,
         }
     }
 
-    public class Question : IBreakingStep, ILabelStep
+    public class Question : Line, IBreakingStep
     {
-        public string Label { get; }
         public readonly string Key;
 
-        public Question(string t, string key)
+        public Question(string t, string key) : base(t)
         {
-            this.Label = t;
             this.Key = key;
         }
 
 
-       
     }
 
     public class BranchQuestion : Question, IBranchStep
@@ -404,25 +396,25 @@ private static Result<List<IStep>> FindRouteToPred(IBranchStep q, string answer,
         }
 
 
-        public static BranchQuestion OnYes(this ILabelStep s, params IStep[] qs)
+        public static Question OnYes(this ILabelStep s, params IStep[] qs)
         {
 
             var res = s.ToQuestion().On("Ja", e => "Ja".Equals(e), qs);
-            return res.GetRoutes().ContainsKey("Nej") ? res: res.On("Nej", e => !"Ja".Equals(e));
+            return res.GetRoutes().ContainsKey("Nej") ? res : res.On("Nej", e => !"Ja".Equals(e));
         }
 
-        public static BranchQuestion OnNo(this ILabelStep s, params IStep[] qs)
+        public static Question OnNo(this ILabelStep s, params IStep[] qs)
         {
             var res = s.ToQuestion().On("Nej", e => !"Ja".Equals(e), qs);
             return res.GetRoutes().ContainsKey("Ja") ? res : res.On("Ja", e => "Ja".Equals(e));
         }
 
-        public static BranchQuestion OnYes(this ILabelStep q, string s)
+        public static Question OnYes(this ILabelStep q, string s)
         {
             return OnYes(q, new Line(s));
         }
 
-        public static BranchQuestion OnNo(this ILabelStep q, string s)
+        public static Question OnNo(this ILabelStep q, string s)
         {
             return OnNo(q, new Line(s));
         }
@@ -460,7 +452,17 @@ private static Result<List<IStep>> FindRouteToPred(IBranchStep q, string answer,
 
     public class State
     {
-        public Dictionary<string, string> s = new Dictionary<string, string>();
+        public Dictionary<string, string> s;
+
+        public State(State origState)
+        {
+            s = new Dictionary<string, string>(origState.s);
+        }
+
+        public State()
+        {
+            s = new Dictionary<string, string>();
+        }
 
         public string Get(string key)
         {
